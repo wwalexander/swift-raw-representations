@@ -95,12 +95,12 @@ struct RawValueMacro: PeerMacro {
                     ),
                     body: .init {
                         .init {
-                            CodeBlockItemListSyntax {
-                                "switch rawValue {"
-                                codeBlockItems
-                                "default: return nil"
-                                "}"
-                            }
+                            .init(
+                                ["switch rawValue {"] + codeBlockItems + [
+                                    "default: return nil",
+                                    "}"
+                                ]
+                            )
                         }
                     }
                 )
