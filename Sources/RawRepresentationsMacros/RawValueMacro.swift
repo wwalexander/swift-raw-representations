@@ -18,15 +18,13 @@ struct RawValueMacro: PeerMacro {
         in context: some MacroExpansionContext
     ) throws(DiagnosticsError) -> [DeclSyntax] {
         guard let variableDeclaration = declaration.as(VariableDeclSyntax.self)
-        else { throw .init(.requiresVariableDeclaration, declaration) }
+        else { throw .init(.requiresVariableDeclaration, declaration)}
 
         guard let binding = variableDeclaration.bindings.first
         else { throw .init(.requiresBinding, variableDeclaration.bindings) }
 
-        guard let typeAnnotation = binding.typeAnnotation
+        guard let rawType = binding.typeAnnotation?.type
         else { throw .init(.requiresTypeAnnotation, binding) }
-
-        let rawType = typeAnnotation.type
 
         guard let accessorBlock = binding.accessorBlock
         else { throw .init(.requiresAccessorBlock, binding) }
@@ -43,12 +41,11 @@ struct RawValueMacro: PeerMacro {
         guard let switchExpression = expressionStatement.expression.as(SwitchExprSyntax.self)
         else { throw .init(.requiresSwitch, expressionStatement.expression) }
 
-
         guard let switchSubject = switchExpression.subject.as(DeclReferenceExprSyntax.self),
               case "self" = switchSubject.baseName.text
         else { throw .init(.requiresSwitchSubject, switchExpression.subject) }
 
-        var codeBlockItems: [CodeBlockItemSyntax] = []
+        var switchCases: [SwitchCaseListSyntax.Element] = []
 
         for element in switchExpression.cases {
             guard let `case` = element.as(SwitchCaseSyntax.self)
@@ -63,8 +60,6 @@ struct RawValueMacro: PeerMacro {
                   caseItems.dropFirst().isEmpty
             else { throw .init(.requiresSwitchCaseLabelItem, caseItems) }
 
-            let pattern = item.pattern
-
             let statements = `case`.statements
 
             guard let statement = statements.first,
@@ -74,10 +69,29 @@ struct RawValueMacro: PeerMacro {
             guard let expression = statement.item.as(ExprSyntax.self)
             else { throw .init(.requiresSwitchCaseStatementItem, statement.item) }
 
-            codeBlockItems.append(
-                "case \(expression): self = \(pattern)"
+
+            switchCases.append(
+                .switchCase(
+                    SwitchCaseSyntax(label: .case(SwitchCaseLabelSyntax {
+                        SwitchCaseItemSyntax(pattern: ExpressionPatternSyntax(expression: expression))
+                    })) {
+                        CodeBlockItemSyntax(item: .expr(
+                            ExprSyntax(SequenceExprSyntax {
+                                TypeExprSyntax(type: IdentifierTypeSyntax(name: .identifier("self")))
+                                AssignmentExprSyntax()
+                                PatternExprSyntax(pattern: item.pattern)
+                            })
+                        ))
+                    }
+                )
             )
         }
+
+        switchCases.append(.switchCase(
+            SwitchCaseSyntax(label: .default(SwitchDefaultLabelSyntax())) {
+                CodeBlockItemSyntax(item: .stmt(.init(ReturnStmtSyntax(expression: NilLiteralExprSyntax()))))
+            }
+        ))
 
         return [
             DeclSyntax(
@@ -93,21 +107,27 @@ struct RawValueMacro: PeerMacro {
                             }
                         )
                     ),
-                    body: .init {
-                        .init {
-                            .init(
-                                ["switch rawValue {"] + codeBlockItems + [
-                                    "default: return nil",
-                                    "}"
-                                ]
+                    body: CodeBlockSyntax {
+                        CodeBlockItemSyntax(
+                            item: .expr(
+                                ExprSyntax(
+                                    SwitchExprSyntax(
+                                        subject: DeclReferenceExprSyntax(
+                                            baseName: .identifier("rawValue")
+                                        ),
+                                        cases: .init(switchCases)
+                                    )
+
+                                )
                             )
-                        }
+                        )
                     }
                 )
-            )
+            ),
         ]
     }
 }
+
 
 enum RawRepresentableMacroDiagnostic: DiagnosticMessage {
     case requiresVariableDeclaration
